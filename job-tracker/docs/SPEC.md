@@ -1,6 +1,6 @@
 # Job Tracker — Technical Specification
 
-Version 0.2 (draft) · 2026-10-15 — updated with answers and real work-order screenshots
+Version 0.3 · 2026-10-15 — updated with answers and real work-order screenshots
 
 A browser app for an internet field technician who is paid per job. It records each completed job, calculates weekly earnings from a price list, subtracts deductions and fuel, and shows statistics.
 
@@ -134,16 +134,16 @@ Detection rules:
 |-------|------|---------|
 | Job ID | `Job\s*#\s*(\d{5,})` | `Job #208332` → `208332` |
 | Work-order code | uppercase text on the same line after the time window `\d+ - \d+ (AM\|PM)` | `RESCUE SI SP`, `NC HSD` |
-| Job type | first word of the code matched against each type's **scan keywords** | `RESCUE` → Rescue, `NC` → NC |
-| Level | remaining words matched against level keywords (editable): Single = `SP`, `HSD`, `SINGLE`; Double = `DP`, `DOUBLE`; Triple = `TP`, `TRIPLE` | `SP` → Single, `HSD` → Single |
+| Job type | words of the code matched against each type's **scan keywords** | `RESCUE` → Rescue, `NC` → NC |
+| Level | words matched against level keywords (editable): Single = `SP`, Double = `DP`, Triple = `TP` (single / double / triple play). Other words (`HSD`, `SI` = self install, `RESIDENTIAL`…) are ignored. | `RESCUE SI SP` → Rescue · Single; `RESIDENTIAL SP` → Single; `NC HSD` → NC · level not detected |
 | Address | text from a line starting with a house number up to and including the 5-digit ZIP (may wrap to the next line) | `4565 S 23rd St Apt 4, Milwaukee, WI 53221` |
 | Time window | `\d{1,2} - \d{1,2} (AM\|PM)` — stored for reference | `3 - 4 PM` |
 
 Customer name is **not** stored.
 
-If a code is not recognized, the job is still created with the type/level left empty and highlighted, so the tech picks them by hand. A "Show recognized text" link shows the raw OCR text.
+If the type or level is not found in the code (e.g. `NC HSD` has no SP/DP/TP), the job is still created with the type/level left empty and highlighted, so the tech picks them by hand. A "Show recognized text" link shows the raw OCR text.
 
-**Scan keywords** are editable in Settings so new work-order codes can be mapped without code changes (e.g. teach the app that `SI` or `DP` means something).
+**Scan keywords** are editable in Settings so new work-order codes can be mapped without code changes (e.g. teach the app a new type word).
 
 ### 3.4 Fuel / deduction
 
@@ -218,14 +218,13 @@ Stored in the browser (`localStorage`, key `jobtracker.v1`) as one JSON document
       { "code": "TC",     "name": "Trouble Call",      "hasLevels": true,  "keywords": ["TC", "TROUBLE"], "hidden": false }
     ],
     "levels": [
-      { "name": "Single", "keywords": ["SP", "HSD", "SINGLE"] },
-      { "name": "Double", "keywords": ["DP", "DOUBLE"] },
-      { "name": "Triple", "keywords": ["TP", "TRIPLE"] }
+      { "name": "Single", "keywords": ["SP"] },
+      { "name": "Double", "keywords": ["DP"] },
+      { "name": "Triple", "keywords": ["TP"] }
     ],
     "rates": { "NC|Single": 4500, "NC|Double": 6000, "NC|Triple": 8500, "COS": 2500 },   // cents
-    "charges": [
-      { "id": "c1", "name": "Modem not returned", "kind": "oneTime", "amount": 7500 },
-      { "id": "c2", "name": "Remote",             "kind": "oneTime", "amount": 1000 }
+    "charges": [   // starts empty — the tech adds their own, e.g.:
+      { "id": "c1", "name": "Modem not returned", "kind": "oneTime", "amount": 7500 }
     ]
   },
   "jobs": [
@@ -321,9 +320,5 @@ job-tracker/
 | Weekly charges | Only for weeks worked. |
 | Scan source | Employer tech app: job card and End of Day Summary (see §3.3). |
 | Extra pay items | None. |
-
-## 10. Open questions
-
-1. In the work-order codes, does **HSD** (High Speed Data) always mean **Single**? What do Double and Triple look like — e.g. `NC DP`, `NC HSD VIDEO`, `NC TP`?
-2. What does **SI** mean in `RESCUE SI SP` — does it change the price?
-3. List of equipment charges and their usual amounts (to pre-fill Settings), or start empty?
+| Work-order level | Only SP / DP / TP decide the level (single / double / triple play). `HSD` is ignored. `SI` = self install (ignored; `RESCUE SI SP` = Rescue, single play). |
+| Default charges | Start empty; the tech adds their own equipment charges in Settings. |
