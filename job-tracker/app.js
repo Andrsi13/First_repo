@@ -28,6 +28,8 @@
       jobs: [],
       expenses: [],
       meta: { lastBackup: null },
+      // what the user corrected after scans, applied to later scans
+      learned: { addresses: {}, words: {}, codes: {} },
     };
   }
 
@@ -48,6 +50,7 @@
     d.jobs = d.jobs || [];
     d.expenses = d.expenses || [];
     d.meta = Object.assign(base.meta, d.meta || {});
+    d.learned = Object.assign(base.learned, d.learned || {});
     d.version = 1;
     return d;
   }
@@ -389,6 +392,7 @@
     };
     const i = db.jobs.findIndex(j => j.id === job.id);
     if (i >= 0) db.jobs[i] = job; else db.jobs.push(job);
+    if (editJob._scanned) learnFrom(editJob._scanned, job);
     save();
     closeSheet('#job-sheet');
     if (afterJobSave) { const f = afterJobSave; afterJobSave = null; f(job); return; }
@@ -493,16 +497,152 @@
   ['#scan-camera', '#scan-file'].forEach(sel => $(sel).addEventListener('change', e => {
     const f = e.target.files[0];
     e.target.value = '';
-    if (f) runScan(f);
+    if (f) openCrop(f);
   }));
 
-  async function runScan(file) {
+  // --- crop ---
+
+  let cropFile = null, cropUrl = null;
+  const crop = { x: 0, y: 0, w: 1, h: 1 }; // fractions of the image
+
+  function openCrop(file) {
     closeSheet('#scan-sheet');
+    cropFile = file;
+    if (cropUrl) URL.revokeObjectURL(cropUrl);
+    cropUrl = URL.createObjectURL(file);
+    Object.assign(crop, { x: 0, y: 0, w: 1, h: 1 });
+    const img = $('#crop-img');
+    img.onload = drawCrop;
+    img.src = cropUrl;
+    openSheet('#crop-sheet');
+  }
+
+  function drawCrop() {
+    const box = $('#crop-box');
+    box.style.left = crop.x * 100 + '%';
+    box.style.top = crop.y * 100 + '%';
+    box.style.width = crop.w * 100 + '%';
+    box.style.height = crop.h * 100 + '%';
+  }
+
+  (function cropDrag() {
+    const wrap = $('#crop-wrap');
+    let drag = null;
+    const MIN = 0.08;
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    wrap.addEventListener('pointerdown', e => {
+      const h = e.target.dataset && e.target.dataset.h;
+      const onBox = e.target.closest('#crop-box');
+      const r = wrap.getBoundingClientRect();
+      if (!h && !onBox) {
+        // tap outside the box: start a new box from here
+        const px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+        Object.assign(crop, { x: px, y: py, w: 0, h: 0 });
+        drag = { mode: 'se', sx: e.clientX, sy: e.clientY, start: { ...crop }, r };
+      } else {
+        drag = { mode: h || 'move', sx: e.clientX, sy: e.clientY, start: { ...crop }, r };
+      }
+      wrap.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    wrap.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dx = (e.clientX - drag.sx) / drag.r.width, dy = (e.clientY - drag.sy) / drag.r.height;
+      const s0 = drag.start;
+      let { x, y, w, h } = s0;
+      if (drag.mode === 'move') {
+        x = clamp(s0.x + dx, 0, 1 - s0.w);
+        y = clamp(s0.y + dy, 0, 1 - s0.h);
+      } else {
+        let l = s0.x, t = s0.y, rr = s0.x + s0.w, b = s0.y + s0.h;
+        if (drag.mode.includes('w')) l = clamp(s0.x + dx, 0, 1);
+        if (drag.mode.includes('e')) rr = clamp(s0.x + s0.w + dx, 0, 1);
+        if (drag.mode.includes('n')) t = clamp(s0.y + dy, 0, 1);
+        if (drag.mode.includes('s')) b = clamp(s0.y + s0.h + dy, 0, 1);
+        x = Math.min(l, rr); y = Math.min(t, b); w = Math.abs(rr - l); h = Math.abs(b - t);
+      }
+      Object.assign(crop, { x, y, w, h });
+      drawCrop();
+    });
+    const end = () => {
+      if (drag && (crop.w < MIN || crop.h < MIN)) Object.assign(crop, drag.start.w >= MIN ? drag.start : { x: 0, y: 0, w: 1, h: 1 });
+      drag = null;
+      drawCrop();
+    };
+    wrap.addEventListener('pointerup', end);
+    wrap.addEventListener('pointercancel', end);
+  })();
+
+  $('#crop-reset').addEventListener('click', () => { Object.assign(crop, { x: 0, y: 0, w: 1, h: 1 }); drawCrop(); });
+
+  $('#crop-go').addEventListener('click', async () => {
+    const bmp = await createImageBitmap(cropFile);
+    const sx = Math.round(crop.x * bmp.width), sy = Math.round(crop.y * bmp.height);
+    const sw = Math.max(1, Math.round(crop.w * bmp.width)), sh = Math.max(1, Math.round(crop.h * bmp.height));
+    const c = document.createElement('canvas');
+    c.width = sw; c.height = sh;
+    c.getContext('2d').drawImage(bmp, sx, sy, sw, sh, 0, 0, sw, sh);
+    closeSheet('#crop-sheet');
+    runScan(c);
+  });
+
+  // --- paste text (Google Lens etc.) ---
+
+  $('#scan-paste').addEventListener('click', () => {
+    closeSheet('#scan-sheet');
+    $('#paste-msg').hidden = true;
+    openSheet('#paste-sheet');
+    pasteFromClipboard(true);
+  });
+
+  async function pasteFromClipboard(quiet) {
+    try {
+      const t = await navigator.clipboard.readText();
+      if (t && t.trim()) { $('#paste-text').value = t; return; }
+      if (!quiet) showPasteMsg('Clipboard is empty. Copy the text in Lens first.');
+    } catch (e) {
+      if (!quiet) showPasteMsg('Could not read the clipboard. Long-press the box below and choose Paste.');
+    }
+    if (quiet) $('#paste-text').focus();
+  }
+  function showPasteMsg(m) { $('#paste-msg').textContent = m; $('#paste-msg').hidden = false; }
+
+  $('#paste-clip').addEventListener('click', () => pasteFromClipboard(false));
+
+  $('#paste-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const text = $('#paste-text').value;
+    if (!text.trim()) { showPasteMsg('Paste the copied text first.'); return; }
+    const found = OCR.parseWorkOrders(text, db.settings);
+    if (!found.length) { showPasteMsg('Could not find a job in this text. Check that it includes the job number, code and address.'); return; }
+    closeSheet('#paste-sheet');
+    $('#paste-text').value = '';
+    showFound(found, text);
+  });
+
+  // text shared to the installed app (Android share sheet → Job Tracker)
+  function handleShare() {
+    const q = new URLSearchParams(location.search);
+    const text = [q.get('title'), q.get('text'), q.get('url')].filter(Boolean).join('\n');
+    if (!text) return;
+    history.replaceState(null, '', location.pathname);
+    const found = OCR.parseWorkOrders(text, db.settings);
+    if (found.length) showFound(found, text);
+    else {
+      $('#paste-text').value = text;
+      openSheet('#paste-sheet');
+      showPasteMsg('Could not find a job in the shared text.');
+    }
+  }
+
+  // --- OCR ---
+
+  async function runScan(image) {
     openJob(null, { status: 'Reading image… (first scan downloads the text reader, ~10 MB)' });
     const status = $('#job-scan-status');
     let text, found;
     try {
-      ({ jobs: found, text } = await OCR.scan(file, db.settings, m => {
+      ({ jobs: found, text } = await OCR.scan(image, db.settings, m => {
         if (m.status === 'recognizing text') status.textContent = `Reading text… ${Math.round(m.progress * 100)}%`;
         else if (m.status === 'second pass') status.textContent = 'Taking a closer look…';
         else if (m.status) status.textContent = m.status.charAt(0).toUpperCase() + m.status.slice(1) + '…';
@@ -513,14 +653,19 @@
     }
     if (!$('#job-sheet').open) return; // user closed it while reading
     if (found.length === 0) {
-      status.textContent = 'No "Job #" found. Fill in by hand — recognized text is below.';
+      status.textContent = 'No job found. Fill in by hand, or try Paste text with Google Lens — recognized text is below.';
       $('#job-raw').hidden = false;
       $('#job-raw pre').textContent = text;
       return;
     }
+    showFound(found, text);
+  }
+
+  function showFound(found, text) {
     if (found.length === 1) {
       const f = found[0];
-      openJob(draftFromScan(f), { raw: text, status: scanStatus(f) });
+      const d = draftFromScan(f);
+      openJob(d, { raw: text, status: scanStatus(d) });
       applyRate();
       return;
     }
@@ -528,16 +673,71 @@
     openReview(found, text);
   }
 
-  function draftFromScan(f) {
+  // --- learning from corrections ---
+
+  const codeKey = c => (c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const L = () => db.learned;
+
+  function applyLearned(f) {
+    const out = { ...f, _mem: [] };
+    const addr = f.address || '';
+    if (addr && L().addresses[addr]) { out.address = L().addresses[addr]; out._mem.push('address'); }
+    else if (addr) {
+      const fixed = addr.split(' ').map(w => L().words[w] || w).join(' ');
+      if (fixed !== addr) { out.address = fixed; out._mem.push('address'); }
+    }
+    const t = typeOf(f.type);
+    const missing = !f.type || (t && t.hasLevels && !f.level);
+    const mem = L().codes[codeKey(f.woCode)];
+    if (missing && mem && typeOf(mem.type)) {
+      out.type = mem.type; out.level = mem.level; out._mem.push('type/level');
+    }
+    return out;
+  }
+
+  function learnFrom(scanned, job) {
+    const l = L();
+    if (scanned.address && job.address && scanned.address !== job.address) {
+      l.addresses[scanned.address] = job.address;
+      const a = scanned.address.split(' '), b = job.address.split(' ');
+      if (a.length === b.length) {
+        a.forEach((w, i) => {
+          // street names and city words only — numbers are specific to one address
+          if (w !== b[i] && /[A-Za-z]{3,}/.test(w) && /[A-Za-z]{3,}/.test(b[i])) l.words[w] = b[i];
+        });
+      }
+    }
+    const k = codeKey(scanned.woCode);
+    if (k && (scanned.type !== job.type || scanned.level !== job.level)) l.codes[k] = { type: job.type, level: job.level };
+    // keep the memory small
+    for (const key of ['addresses', 'words', 'codes']) {
+      const ks = Object.keys(l[key]);
+      if (ks.length > 300) ks.slice(0, ks.length - 300).forEach(x => delete l[key][x]);
+    }
+  }
+
+  function draftFromScan(raw) {
+    const f = applyLearned(raw);
     const t = typeOf(f.type);
     const level = t && t.hasLevels ? f.level : null;
-    const r = f.type ? rateFor(f.type, level) : undefined;
+    const r = f.type && (!t || !t.hasLevels || level) ? rateFor(f.type, level) : undefined;
     return {
       id: null, date: today(), type: f.type, level,
       jobId: f.jobId, address: f.address, timeWindow: f.timeWindow, woCode: f.woCode,
-      price: r ?? null, notes: '', source: 'scan',
+      price: r ?? null, notes: '', source: 'scan', _mem: f._mem,
+      // what the scan produced (after memory), to learn from the user's corrections
+      _scanned: { address: f.address, woCode: f.woCode, type: f.type, level },
     };
   }
+
+  // most common job-number length among saved jobs (job numbers are usually all the same length)
+  function usualIdLen(extra = []) {
+    const counts = {};
+    [...db.jobs.map(j => j.jobId), ...extra].filter(Boolean).forEach(id => { counts[id.length] = (counts[id.length] || 0) + 1; });
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return best ? +best[0] : 0;
+  }
+  const idLooksOff = (id, extra) => { const n = usualIdLen(extra); return !!id && !!n && id.length !== n; };
 
   function scanStatus(f) {
     const t = typeOf(f.type);
@@ -545,7 +745,10 @@
     if (!f.type) miss.push('job type');
     if ((!t || t.hasLevels) && !f.level) miss.push('level');
     if (!f.address) miss.push('address');
-    return miss.length ? `Check the form — could not detect: ${miss.join(', ')}.` : 'Scanned. Check and tap Save.';
+    if (!f.jobId) miss.push('job number');
+    const mem = (f._mem && f._mem.length ? ` Used your earlier corrections for ${f._mem.join(' and ')}.` : '') +
+      (idLooksOff(f.jobId) ? ' Check the job number — it has an unusual number of digits.' : '');
+    return (miss.length ? `Check the form — could not detect: ${miss.join(', ')}.` : 'Scanned. Check and tap Save.') + mem;
   }
 
   // review several jobs
@@ -554,7 +757,7 @@
   function openReview(found, raw) {
     review = found.map(f => {
       const d = draftFromScan(f);
-      d._dup = db.jobs.some(j => j.jobId === f.jobId);
+      d._dup = !!f.jobId && db.jobs.some(j => j.jobId === f.jobId);
       d._on = !d._dup;
       return d;
     });
@@ -576,7 +779,7 @@
       return `<div class="rev">
         <input type="checkbox" data-r="${i}" data-check ${d._on ? 'checked' : ''}>
         <div class="main">
-          <div class="line1"><b>#${esc(d.jobId)}</b>${d.woCode ? `<span class="muted small">${esc(d.woCode)}</span>` : ''}${d._dup ? '<span class="tag">already added</span>' : ''}<span style="margin-left:auto;font-weight:600">${d.price != null ? fmt(d.price) : '—'}</span></div>
+          <div class="line1"><span class="rid-wrap">#<input class="rid" data-r="${i}" data-f="jobId" value="${esc(d.jobId)}" inputmode="numeric" placeholder="job #" aria-label="Job number"></span>${d.woCode ? `<span class="muted small">${esc(d.woCode)}</span>` : ''}${d._dup ? '<span class="tag">already added</span>' : ''}${idLooksOff(d.jobId, review.map(x => x.jobId)) ? '<span class="tag">check #</span>' : ''}${d._mem && d._mem.includes('type/level') ? '<span class="tag mem">remembered</span>' : ''}<span style="margin-left:auto;font-weight:600">${d.price != null ? fmt(d.price) : '—'}</span></div>
           <div class="addr">${esc(d.address || 'no address found')}${d.timeWindow ? ' · ' + esc(d.timeWindow) : ''}</div>
           ${types}${levels}
         </div>
@@ -587,7 +790,17 @@
     $('#review-save').disabled = !n;
   }
 
+  $('#review-list').addEventListener('change', e => {
+    const el = e.target;
+    if (el.dataset.f !== 'jobId') return;
+    const d = review[+el.dataset.r];
+    d.jobId = el.value.trim();
+    d._dup = !!d.jobId && db.jobs.some(j => j.jobId === d.jobId);
+    renderReview();
+  });
+
   $('#review-list').addEventListener('click', e => {
+    if (e.target.dataset.f === 'jobId') return;
     const b = e.target.closest('[data-r]'); if (!b) return;
     const d = review[+b.dataset.r];
     if (b.dataset.check !== undefined) d._on = b.checked;
@@ -607,6 +820,7 @@
     const date = $('#review-date').value || today();
     const now = new Date().toISOString();
     sel.forEach(d => {
+      learnFrom(d._scanned, d);
       db.jobs.push({
         id: uid('j'), date, type: d.type, level: d.level, jobId: d.jobId, woCode: d.woCode,
         timeWindow: d.timeWindow, address: d.address, price: d.price || 0, notes: '',
@@ -671,6 +885,9 @@
 
     const lb = db.meta.lastBackup;
     $('#data-info').textContent = `${db.jobs.length} jobs, ${db.expenses.length} expenses saved on this device. Last backup: ${lb ? new Date(lb).toLocaleDateString() : 'never'}.`;
+    const nLearned = Object.keys(db.learned.addresses).length + Object.keys(db.learned.words).length + Object.keys(db.learned.codes).length;
+    $('#clear-learned').textContent = `Forget scan corrections (${nLearned})`;
+    $('#clear-learned').disabled = !nLearned;
   }
 
   const splitWords = v => v.split(/[,\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -752,6 +969,10 @@
         e.date, toISO(weekStart(parseISO(e.date))), e.jobId || '', e.kind === 'fuel' ? 'Fuel' : 'Deduction', '', e.name || '', '', '', (-e.amount / 100).toFixed(2), [e.gallons ? e.gallons + ' gal' : '', e.note].filter(Boolean).join(' ')]);
       download(`job-tracker-${today()}.csv`, [head, ...rows, ...exp].map(r => r.map(csvCell).join(',')).join('\n'), 'text/csv');
     },
+    'clear-learned'() {
+      if (!confirm('Forget all corrections the scan has learned?')) return;
+      db.learned = defaults().learned; save(); renderSettings(); toast('Scan corrections cleared');
+    },
     wipe() {
       if (!confirm('Delete ALL jobs, expenses and settings on this device? Export a backup first if unsure.')) return;
       if (!confirm('Are you sure? This cannot be undone.')) return;
@@ -810,6 +1031,7 @@
   }
 
   render();
+  handleShare();
   if (!Object.keys(db.settings.rates).length && !db.jobs.length) {
     setTimeout(() => toast('Start by setting your prices in ⚙ Settings'), 400);
   }

@@ -7,7 +7,7 @@
   <title>Job Tracker</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -139,10 +139,55 @@
       <h2>Scan work order</h2>
       <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
     </header>
-    <p class="muted">Use the job card or the End of Day Summary. A screenshot gives the best result.</p>
+    <p class="muted">Use the job card or the End of Day Summary.</p>
     <div class="actions col">
-      <button id="scan-take" class="primary">📷 Take photo</button>
+      <button id="scan-paste" class="primary">📋 Paste text (most accurate)</button>
       <button id="scan-pick">🖼 Pick screenshot / photo</button>
+      <button id="scan-take">📷 Take photo</button>
+    </div>
+    <details class="howto">
+      <summary>How to copy text with Google Lens</summary>
+      <ol>
+        <li>Take a screenshot of the job card or End of Day Summary.</li>
+        <li>Open it in Google Photos → tap <b>Lens</b> → <b>Text</b> → <b>Copy all</b> (or <b>Select all</b> → <b>Copy</b>).</li>
+        <li>Come back here → <b>Paste text</b>.</li>
+      </ol>
+      <p>Tip: if Job Tracker is added to your home screen, you can also tap <b>Share</b> in Lens and pick <b>Job Tracker</b>.</p>
+    </details>
+  </dialog>
+
+  <!-- ===== Paste text ===== -->
+  <dialog id="paste-sheet" class="sheet">
+    <form method="dialog" id="paste-form">
+      <header class="sheet-head">
+        <h2>Paste text</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+      </header>
+      <button type="button" id="paste-clip">📋 Paste from clipboard</button>
+      <label>Text<textarea id="paste-text" rows="8" placeholder="Job #208332&#10;3 - 4 PM  RESCUE SI SP&#10;4565 S 23rd St Apt 4, Milwaukee, WI 53221"></textarea></label>
+      <div id="paste-msg" class="warn" hidden></div>
+      <div class="actions">
+        <button type="submit" class="primary grow">Read text</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== Crop ===== -->
+  <dialog id="crop-sheet" class="sheet full">
+    <header class="sheet-head">
+      <h2>Select the job card</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+    </header>
+    <p class="muted small">Drag the corners so the box covers only the job info. Less background = better reading.</p>
+    <div class="crop-outer">
+      <div id="crop-wrap">
+        <img id="crop-img" alt="Selected image">
+        <div id="crop-box"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="crop-reset">Whole image</button>
+      <button type="button" id="crop-go" class="primary grow">Read text</button>
     </div>
   </dialog>
 
@@ -200,6 +245,7 @@
         <button type="button" data-action="export-json">⬇ Export backup (JSON)</button>
         <button type="button" data-action="import-json">⬆ Import backup</button>
         <button type="button" data-action="export-csv">⬇ Export jobs CSV</button>
+        <button type="button" data-action="clear-learned" id="clear-learned">Forget scan corrections</button>
         <button type="button" data-action="wipe" class="danger">Delete all data</button>
       </div>
     </section>
