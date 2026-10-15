@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d4ed8">
+  <title>Job Tracker</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ===== Week view ===== -->
+  <main id="view-week" class="view">
+    <header class="top">
+      <button class="icon-btn" id="prev-week" aria-label="Previous week">‹</button>
+      <div class="title">
+        <h1 id="week-title">This week</h1>
+        <div id="week-range" class="muted"></div>
+      </div>
+      <button class="icon-btn" id="next-week" aria-label="Next week">›</button>
+      <button class="icon-btn" id="open-settings" aria-label="Settings">⚙</button>
+    </header>
+
+    <section class="hero">
+      <div id="week-gross" class="big">$0</div>
+      <div id="week-count" class="muted">0 jobs completed</div>
+      <div class="breakdown">
+        <div><span>Deducted</span><b id="week-deducted" class="neg">$0</b></div>
+        <div><span>Fuel</span><b id="week-fuel" class="neg">$0</b></div>
+        <div><span>Net</span><b id="week-net">$0</b></div>
+      </div>
+    </section>
+
+    <div id="backup-banner" class="banner" hidden>
+      <span>No backup in 14+ days.</span>
+      <button class="link" data-action="export-json">Back up now</button>
+    </div>
+
+    <section>
+      <h2 class="section-title">Jobs completed</h2>
+      <div id="week-list" class="list"></div>
+    </section>
+  </main>
+
+  <!-- ===== Stats view ===== -->
+  <main id="view-stats" class="view" hidden>
+    <header class="top">
+      <div class="title"><h1>Statistics</h1></div>
+      <button class="icon-btn" id="open-settings-2" aria-label="Settings">⚙</button>
+    </header>
+    <div id="stats-periods" class="chips"></div>
+    <div id="stats-body"></div>
+  </main>
+
+  <!-- ===== Bottom bar ===== -->
+  <nav class="bottom">
+    <button id="btn-scan"><span class="ico">📷</span><span>Scan</span></button>
+    <button id="btn-fuel"><span class="ico">🚚</span><span>Fuel</span></button>
+    <button id="btn-stats"><span class="ico">📊</span><span id="btn-stats-label">Stats</span></button>
+    <button id="btn-add" class="primary"><span class="ico">＋</span><span>Add</span></button>
+  </nav>
+
+  <input type="file" id="scan-camera" accept="image/*" capture="environment" hidden>
+  <input type="file" id="scan-file" accept="image/*" hidden>
+  <input type="file" id="import-file" accept="application/json,.json" hidden>
+
+  <!-- ===== Job sheet ===== -->
+  <dialog id="job-sheet" class="sheet">
+    <form method="dialog" id="job-form">
+      <header class="sheet-head">
+        <h2 id="job-sheet-title">Add job</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+      </header>
+      <div id="job-scan-status" class="status" hidden></div>
+
+      <label class="field-label">Job type</label>
+      <div id="job-types" class="seg wrap"></div>
+
+      <div id="job-levels-wrap">
+        <label class="field-label">Level</label>
+        <div id="job-levels" class="seg"></div>
+      </div>
+
+      <div class="row2">
+        <label>Job ID<input id="job-id" inputmode="numeric" autocomplete="off" placeholder="208332"></label>
+        <label>Date<input id="job-date" type="date" required></label>
+      </div>
+      <div id="job-dup" class="warn" hidden></div>
+      <label>Address<input id="job-address" autocomplete="off" placeholder="4565 S 23rd St, Milwaukee, WI 53221"></label>
+      <div class="row2">
+        <label>Price $<input id="job-price" inputmode="decimal" placeholder="0.00"></label>
+        <label>Time window<input id="job-time" autocomplete="off" placeholder="3 - 4 PM"></label>
+      </div>
+      <label>Notes<input id="job-notes" autocomplete="off"></label>
+      <div id="job-wo" class="muted small"></div>
+      <details id="job-raw" hidden><summary>Show recognized text</summary><pre></pre></details>
+
+      <div class="actions">
+        <button type="button" id="job-delete" class="danger" hidden>Delete</button>
+        <button type="submit" class="primary grow">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== Expense sheet ===== -->
+  <dialog id="exp-sheet" class="sheet">
+    <form method="dialog" id="exp-form">
+      <header class="sheet-head">
+        <h2 id="exp-sheet-title">Add expense</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+      </header>
+      <div class="seg" id="exp-kind">
+        <button type="button" data-kind="fuel">⛽ Fuel</button>
+        <button type="button" data-kind="deduction">➖ Deduction</button>
+      </div>
+      <div id="exp-ded-fields">
+        <label>Charge<select id="exp-charge"></select></label>
+        <label id="exp-name-wrap">Name<input id="exp-name" autocomplete="off" placeholder="e.g. Modem not returned"></label>
+        <label>Related job ID<input id="exp-jobid" inputmode="numeric" autocomplete="off"></label>
+      </div>
+      <div class="row2">
+        <label>Amount $<input id="exp-amount" inputmode="decimal" placeholder="0.00" required></label>
+        <label>Date<input id="exp-date" type="date" required></label>
+      </div>
+      <label id="exp-gal-wrap">Gallons<input id="exp-gallons" inputmode="decimal" placeholder="optional"></label>
+      <label>Note<input id="exp-note" autocomplete="off"></label>
+      <div class="actions">
+        <button type="button" id="exp-delete" class="danger" hidden>Delete</button>
+        <button type="submit" class="primary grow">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== Scan choice ===== -->
+  <dialog id="scan-sheet" class="sheet">
+    <header class="sheet-head">
+      <h2>Scan work order</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+    </header>
+    <p class="muted">Use the job card or the End of Day Summary. A screenshot gives the best result.</p>
+    <div class="actions col">
+      <button id="scan-take" class="primary">📷 Take photo</button>
+      <button id="scan-pick">🖼 Pick screenshot / photo</button>
+    </div>
+  </dialog>
+
+  <!-- ===== Scan review (several jobs) ===== -->
+  <dialog id="review-sheet" class="sheet">
+    <form method="dialog" id="review-form">
+      <header class="sheet-head">
+        <h2 id="review-title">Found jobs</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+      </header>
+      <label>Date for all<input id="review-date" type="date" required></label>
+      <div id="review-list" class="list"></div>
+      <details id="review-raw"><summary>Show recognized text</summary><pre></pre></details>
+      <div class="actions">
+        <button type="submit" class="primary grow" id="review-save">Add selected</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== Settings ===== -->
+  <dialog id="settings-sheet" class="sheet full">
+    <header class="sheet-head">
+      <h2>Settings</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+    </header>
+
+    <section class="card">
+      <h3>Price for each code</h3>
+      <div id="rates"></div>
+    </section>
+
+    <section class="card">
+      <h3>Charges (deductions)</h3>
+      <p class="muted small">One-time charges are picked when you log a deduction. Per week / per job / % are applied automatically (per week only in weeks you worked).</p>
+      <div id="charges"></div>
+      <button type="button" id="add-charge">＋ Add charge</button>
+    </section>
+
+    <section class="card">
+      <h3>Job types</h3>
+      <p class="muted small">Scan words: words in the work-order code that mean this type (comma separated).</p>
+      <div id="types"></div>
+      <button type="button" id="add-type">＋ Add job type</button>
+    </section>
+
+    <section class="card">
+      <h3>Level scan words</h3>
+      <div id="levels"></div>
+    </section>
+
+    <section class="card">
+      <h3>Data</h3>
+      <p class="muted small" id="data-info"></p>
+      <div class="actions col">
+        <button type="button" data-action="export-json">⬇ Export backup (JSON)</button>
+        <button type="button" data-action="import-json">⬆ Import backup</button>
+        <button type="button" data-action="export-csv">⬇ Export jobs CSV</button>
+        <button type="button" data-action="wipe" class="danger">Delete all data</button>
+      </div>
+    </section>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="ocr.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
