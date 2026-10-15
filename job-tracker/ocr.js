@@ -111,11 +111,24 @@
     }
   }
 
+  const addrKey = a => (a || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14);
+
+  // Same job read twice? Same number, one number missing a digit ("73271" vs "173271"),
+  // or the same street address.
+  function sameJob(x, y) {
+    if (x.jobId && x.jobId === y.jobId) return true;
+    if (x.jobId && y.jobId && x.jobId.length >= 5 && y.jobId.length >= 5 &&
+        (x.jobId.endsWith(y.jobId) || y.jobId.endsWith(x.jobId))) return true;
+    const ka = addrKey(x.address), kb = addrKey(y.address);
+    return ka.length >= 10 && ka === kb;
+  }
+
   function mergeJobs(a, b) {
     const out = a.map(j => ({ ...j }));
     for (const j of b) {
-      const m = out.find(x => x.jobId === j.jobId);
+      const m = out.find(x => sameJob(x, j) && (j.jobId || out.length === 1));
       if (!m) { out.push(j); continue; }
+      if (j.jobId && j.jobId.length > (m.jobId || '').length) m.jobId = j.jobId;
       for (const k of ['type', 'level', 'timeWindow', 'woCode']) if (!m[k] && j[k]) m[k] = j[k];
       // prefer an address that ends with state + ZIP
       if (j.address && (!m.address || (!ZIP_RE.test(m.address) && ZIP_RE.test(j.address)))) m.address = j.address;
@@ -123,12 +136,60 @@
     return out;
   }
 
+  // ---------- auto-fixes for common misreads ----------
+
+  const US_STATES = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '));
+  // valid first two ZIP digits for nearby states (extend as needed)
+  const STATE_ZIP = {
+    WI: ['53', '54'], IL: ['60', '61', '62'], MN: ['55', '56'], MI: ['48', '49'], IA: ['50', '51', '52'],
+  };
+  // digits OCR tends to confuse with each other
+  const DIGIT_SWAPS = {
+    0: '86', 1: '7', 3: '58', 4: '9', 5: '368', 6: '58', 7: '1', 8: '3560', 9: '4',
+  };
+
+  function fixState(st) {
+    const up = st.toUpperCase();
+    if (US_STATES.has(up)) return up;
+    const alt = up.replace(/[1L|!]/g, 'I').replace(/0/g, 'O').replace(/5/g, 'S');
+    return US_STATES.has(alt) ? alt : up;
+  }
+
+  function fixZip(zip, state) {
+    const ok = STATE_ZIP[state];
+    if (!ok || ok.includes(zip.slice(0, 2))) return zip;
+    const tries = [];
+    for (const a of DIGIT_SWAPS[zip[0]] || '') tries.push(a + zip.slice(1));
+    for (const b of DIGIT_SWAPS[zip[1]] || '') tries.push(zip[0] + b + zip.slice(2));
+    for (const a of DIGIT_SWAPS[zip[0]] || '') for (const b of DIGIT_SWAPS[zip[1]] || '') tries.push(a + b + zip.slice(2));
+    return tries.find(z => ok.includes(z.slice(0, 2))) || zip;
+  }
+
+  function fixAddress(addr) {
+    if (!addr) return addr;
+    let a = addr.replace(/\s+/g, ' ').trim();
+    // "4565S 23rd" -> "4565 S 23rd"
+    a = a.replace(/^(\d{1,6})([NSEW])\s/, '$1 $2 ');
+    // "3149 5 Howell" -> "3149 S Howell" (S read as 5)
+    a = a.replace(/^(\d{1,6}) 5\.? (?=[A-Za-z0-9])/, '$1 S ');
+    // "45655 23rd St" -> "4565 S 23rd St" (space lost and S read as 5, before a numbered street)
+    a = a.replace(/^(\d{3,5})5 (\d{1,3}(?:st|nd|rd|th)\b)/i, '$1 S $2');
+    // "WI153207" / "WI53207": stray character or missing space between state and ZIP
+    a = a.replace(/\b([A-Za-z]{2})[1|l]?(\d{5})$/, '$1 $2');
+    // state + ZIP at the end
+    a = a.replace(/\b([A-Za-z0-9|!]{2})(\.?,?\s+)(\d{5})((?:-\d{4})?)$/, (all, st, sep, zip, plus4) => {
+      const state = fixState(st);
+      return state + sep + fixZip(zip, state) + plus4;
+    });
+    return a;
+  }
+
   // ---------- parsing ----------
 
   const JOB_RE = /\bJ[o0]b\s*[#H*]?\s*:?\s*(\d{5,})/i;
   const TIME_RE = /(\d{1,2})(?::(\d{2}))?\s*[-–—~_.]\s*(\d{1,2})(?::(\d{2}))?\s*([AaPp])\s*[pP]?\s*[Mm]/;
   // state + ZIP, e.g. "WI 53221" (a lone 5-digit number may be a misread house number)
-  const ZIP_RE = /\b[A-Za-z]{2}\.?,?\s+\d{5}(?:-\d{4})?\b/;
+  const ZIP_RE = /\b[A-Za-z][A-Za-z1|!]\.?,?\s+\d{5}(?:-\d{4})?\b/;
   const STREET_START_RE = /\b(\d{1,6})([NSEW])?\s+[A-Za-z0-9]/;
 
   function words(s) {
@@ -226,7 +287,7 @@
       if (plausible) candidates.push({ text, zip: !!z });
     }
     const pick = candidates.find(c => c.zip) || candidates[0];
-    const address = pick ? pick.text : '';
+    const address = pick ? fixAddress(pick.text) : '';
 
     return { jobId, woCode, type, level, address, timeWindow };
   }
@@ -243,11 +304,18 @@
       const block = (rest.trim() ? [rest] : []).concat(lines.slice(s.i + 1, end));
       out.push(parseBlock(s.id, block, settings));
     });
+    // no "Job #" (e.g. only part of the screen was copied): treat it all as one job
+    if (!starts.length && lines.length) {
+      const j = parseBlock('', lines, settings);
+      if (j.type || j.address) out.push(j);
+    }
+    // the same job can show up twice (e.g. a misread number): merge duplicates
+    const merged = out.length ? mergeJobs([out[0]], out.slice(1)) : out;
     // de-duplicate by job id (same job read twice)
     const seen = new Set();
-    return out.filter(j => !seen.has(j.jobId) && seen.add(j.jobId));
+    return merged.filter(j => !j.jobId || (!seen.has(j.jobId) && seen.add(j.jobId)));
   }
 
-  global.OCR = { scan, parseWorkOrders };
-  if (typeof module !== 'undefined') module.exports = { parseWorkOrders, mergeJobs };
+  global.OCR = { scan, parseWorkOrders, fixAddress };
+  if (typeof module !== 'undefined') module.exports = { parseWorkOrders, mergeJobs, fixAddress };
 })(typeof window !== 'undefined' ? window : globalThis);

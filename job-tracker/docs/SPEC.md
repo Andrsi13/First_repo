@@ -1,6 +1,6 @@
 # Job Tracker — Technical Specification
 
-Version 0.3 · 2026-10-15 — updated with answers and real work-order screenshots
+Version 0.4 · 2026-10-15 — updated with answers and real work-order screenshots
 
 A browser app for an internet field technician who is paid per job. It records each completed job, calculates weekly earnings from a price list, subtracts deductions and fuel, and shows statistics.
 
@@ -142,6 +142,21 @@ Detection rules:
 Customer name is **not** stored.
 
 If the type or level is not found in the code (e.g. `NC HSD` has no SP/DP/TP), the job is still created with the type/level left empty and highlighted, so the tech picks them by hand. A "Show recognized text" link shows the raw OCR text.
+
+#### Improving recognition (v0.4)
+
+- **Paste text (recommended).** Copy the screen text with Google Lens (Photos → Lens → Text → Copy all), then Scan → *Paste text*. The same parser reads it; Lens is far more accurate than on-device OCR. When the app is installed to the home screen, text can also be **shared** to it from Lens (Web Share Target, `?text=`).
+- **Crop.** After picking a photo the tech drags a box around the job card before reading — less background, fewer errors.
+- **Auto-fixes** for common misreads (`fixAddress` in `ocr.js`):
+  - `4565S 23rd` / `45655 23rd St` → `4565 S 23rd St`; `3149 5 Howell` → `3149 S Howell`
+  - state: `Wi`, `W1` → `WI`; `WI153207` → `WI 53207`
+  - ZIP checked against the state (WI 53/54, IL 60–62, MN 55–56, MI 48–49, IA 50–52); one confused digit is fixed: `33110` → `53110`, `55207` → `53207`
+  - the same job read twice (e.g. `73271` and `173271`, or same address) is merged
+  - a job number with an unusual number of digits is flagged **check #**; job numbers are editable in the review list
+- **Learning from corrections.** When the tech saves a scanned job after changing it, the app remembers (`db.learned`):
+  - work-order code → type + level (e.g. `NC HSD` → NC · Single) — used when the code has no SP/DP/TP; shown as "remembered"
+  - corrected addresses and street-name words
+  - Settings → Data → *Forget scan corrections* clears it.
 
 **Scan keywords** are editable in Settings so new work-order codes can be mapped without code changes (e.g. teach the app a new type word).
 

@@ -1,6 +1,6 @@
 // Offline cache for the app shell. Bump VERSION when files change.
-const VERSION = 'jt-v1';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'ocr.js', 'manifest.json', 'icon.svg'];
+const VERSION = 'jt-v2';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'ocr.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

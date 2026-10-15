@@ -8,7 +8,10 @@ Full spec: [docs/SPEC.md](docs/SPEC.md).
 ## Features
 - **This week** screen: earned, jobs completed, deducted, fuel, net; ‹ › to browse weeks.
 - **＋ Add**: job type (NC / RC / Rescue / COS / TC) → Single / Double / Triple → job ID, address. Price fills in from Settings. Tap any job to edit or delete it.
-- **📷 Scan**: photo or screenshot of the work app — the job card, or the End of Day Summary (adds several jobs at once). Text is read on the phone; nothing is uploaded.
+- **📷 Scan**: the job card or End of Day Summary (adds several jobs at once).
+  - **Paste text** (most accurate): screenshot → Google Photos → Lens → Text → Copy all → Scan → Paste text. If the app is on your home screen you can also Share from Lens straight to Job Tracker.
+  - **Photo / screenshot**: drag a box around the job info, then the text is read on the phone (nothing is uploaded).
+  - Common misreads are fixed automatically, and the app remembers your corrections.
 - **🚚 Fuel**: fuel expenses and one-time deductions (equipment charges).
 - **📊 Stats**: this/last week, month, year, all time; by code; net per week chart.
 - **⚙ Settings**: price for each code, default charges, job types and scan words, backup / import / CSV export.
