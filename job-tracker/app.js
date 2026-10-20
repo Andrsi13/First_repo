@@ -527,25 +527,38 @@
 
   (function cropDrag() {
     const wrap = $('#crop-wrap');
+    // touches are taken on the padded area around the image too, so corners
+    // can be grabbed without starting at the screen edge (Android back swipe)
+    const area = $('.crop-outer');
     let drag = null;
     const MIN = 0.08;
+    const GRAB = 48; // px: a touch this close to a corner grabs it
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-    wrap.addEventListener('pointerdown', e => {
-      const h = e.target.dataset && e.target.dataset.h;
-      const onBox = e.target.closest('#crop-box');
+    area.addEventListener('pointerdown', e => {
       const r = wrap.getBoundingClientRect();
-      if (!h && !onBox) {
-        // tap outside the box: start a new box from here
-        const px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
-        Object.assign(crop, { x: px, y: py, w: 0, h: 0 });
-        drag = { mode: 'se', sx: e.clientX, sy: e.clientY, start: { ...crop }, r };
-      } else {
-        drag = { mode: h || 'move', sx: e.clientX, sy: e.clientY, start: { ...crop }, r };
+      const px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+      // nearest corner within reach
+      const corners = {
+        nw: [crop.x, crop.y], ne: [crop.x + crop.w, crop.y],
+        sw: [crop.x, crop.y + crop.h], se: [crop.x + crop.w, crop.y + crop.h],
+      };
+      let mode = null, best = GRAB;
+      for (const [k, [cx, cy]] of Object.entries(corners)) {
+        const d = Math.hypot(e.clientX - (r.left + cx * r.width), e.clientY - (r.top + cy * r.height));
+        if (d < best) { best = d; mode = k; }
       }
-      wrap.setPointerCapture(e.pointerId);
+      const inside = px >= crop.x && px <= crop.x + crop.w && py >= crop.y && py <= crop.y + crop.h;
+      if (!mode && inside) mode = 'move';
+      if (!mode) {
+        // touch away from the box: start a new box from here
+        Object.assign(crop, { x: clamp(px, 0, 1), y: clamp(py, 0, 1), w: 0, h: 0 });
+        mode = 'se';
+      }
+      drag = { mode, sx: e.clientX, sy: e.clientY, start: { ...crop }, r };
+      area.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
-    wrap.addEventListener('pointermove', e => {
+    area.addEventListener('pointermove', e => {
       if (!drag) return;
       const dx = (e.clientX - drag.sx) / drag.r.width, dy = (e.clientY - drag.sy) / drag.r.height;
       const s0 = drag.start;
@@ -569,8 +582,10 @@
       drag = null;
       drawCrop();
     };
-    wrap.addEventListener('pointerup', end);
-    wrap.addEventListener('pointercancel', end);
+    area.addEventListener('pointerup', end);
+    area.addEventListener('pointercancel', end);
+    // an accidental back swipe should not throw the selection away; use ✕ to leave
+    $('#crop-sheet').addEventListener('cancel', e => e.preventDefault());
   })();
 
   $('#crop-reset').addEventListener('click', () => { Object.assign(crop, { x: 0, y: 0, w: 1, h: 1 }); drawCrop(); });
